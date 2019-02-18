@@ -62,3 +62,17 @@ define KernelPackage/owl-loader/description
 endef
 
 $(eval $(call KernelPackage,owl-loader))
+
+#wireless drivers
+define KernelPackage/rtl8189es
+  DEPENDS:= +kmod-usb-core kmod-usb-net
+  SUBMENU:=$(WIRELESS_MENU)
+  TITLE:=RTL8189es support 
+  KCONFIG:=CONFIG_RTL8189ES
+  FILES:=$(LINUX_DIR)/drivers/net/wireless/realtek/rtl8189es/8189es.ko
+#  AUTOLOAD:=$(call AutoProbe,rtl8189es)
+  AUTOLOAD:=$(call AutoLoad,50,8189es)
+endef
+
+$(eval $(call KernelPackage,rtl8189es))
+
