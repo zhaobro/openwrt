@@ -28,3 +28,6 @@ jobs:
         with:
           name: firmware
           path: bin/targets/sunxi/cortexa7/
+
+      - name: Debug with tmate
+        uses: mxschmitt/action-tmate@v3
