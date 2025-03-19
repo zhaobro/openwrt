@@ -16,17 +16,14 @@ jobs:
 
       - name: 更新feeds并安装
         run: |
-          cd openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
       - name: 使用仓库中的 .config
         run: |
-          cd openwrt
           cp ../.config .config
 
       - name: 最后一步编译
         run: |
-          cd openwrt
           make V=s
 
