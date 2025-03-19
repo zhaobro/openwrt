@@ -34,7 +34,7 @@ MODULE_PARM_DESC(msg_level, "Message level (-1=defaults,0=none,...,16=all)");
 
 #define ETH_SWITCH_HEADER_LEN	2
 
-static int ag71xx_tx_packets(struct ag71xx *ag, bool flush);
+static int ag71xx_tx_packets(struct ag71xx *ag, bool flush, int budget);
 
 static inline unsigned int ag71xx_max_frame_len(unsigned int mtu)
 {
@@ -130,7 +130,7 @@ static void ag71xx_ring_tx_init(struct ag71xx *ag)
 {
 	struct ag71xx_ring *ring = &ag->tx_ring;
 	int ring_size = BIT(ring->order);
-	int ring_mask = ring_size - 1;
+	int ring_mask = BIT(ring->order) - 1;
 	int i;
 
 	for (i = 0; i < ring_size; i++) {
@@ -162,7 +162,7 @@ static void ag71xx_ring_rx_clean(struct ag71xx *ag)
 
 	for (i = 0; i < ring_size; i++)
 		if (ring->buf[i].rx_buf) {
-			dma_unmap_single(&ag->dev->dev, ring->buf[i].dma_addr,
+			dma_unmap_single(&ag->pdev->dev, ring->buf[i].dma_addr,
 					 ag->rx_buf_size, DMA_FROM_DEVICE);
 			skb_free_frag(ring->buf[i].rx_buf);
 		}
@@ -187,7 +187,7 @@ static bool ag71xx_fill_rx_buf(struct ag71xx *ag, struct ag71xx_buf *buf,
 		return false;
 
 	buf->rx_buf = data;
-	buf->dma_addr = dma_map_single(&ag->dev->dev, data, ag->rx_buf_size,
+	buf->dma_addr = dma_map_single(&ag->pdev->dev, data, ag->rx_buf_size,
 				       DMA_FROM_DEVICE);
 	desc->data = (u32) buf->dma_addr + offset;
 	return true;
@@ -276,15 +276,15 @@ static int ag71xx_rings_init(struct ag71xx *ag)
 	if (!tx->buf)
 		return -ENOMEM;
 
-	tx->descs_cpu = dma_alloc_coherent(NULL, ring_size * AG71XX_DESC_SIZE,
-					   &tx->descs_dma, GFP_ATOMIC);
+	tx->descs_cpu = dma_alloc_coherent(&ag->pdev->dev, ring_size * AG71XX_DESC_SIZE,
+					   &tx->descs_dma, GFP_KERNEL);
 	if (!tx->descs_cpu) {
 		kfree(tx->buf);
 		tx->buf = NULL;
 		return -ENOMEM;
 	}
 
-	rx->buf = &tx->buf[BIT(tx->order)];
+	rx->buf = &tx->buf[tx_size];
 	rx->descs_cpu = ((void *)tx->descs_cpu) + tx_size * AG71XX_DESC_SIZE;
 	rx->descs_dma = tx->descs_dma + tx_size * AG71XX_DESC_SIZE;
 
@@ -299,7 +299,7 @@ static void ag71xx_rings_free(struct ag71xx *ag)
 	int ring_size = BIT(tx->order) + BIT(rx->order);
 
 	if (tx->descs_cpu)
-		dma_free_coherent(NULL, ring_size * AG71XX_DESC_SIZE,
+		dma_free_coherent(&ag->pdev->dev, ring_size * AG71XX_DESC_SIZE,
 				  tx->descs_cpu, tx->descs_dma);
 
 	kfree(tx->buf);
@@ -333,7 +333,7 @@ static unsigned char *ag71xx_speed_str(struct ag71xx *ag)
 	return "?";
 }
 
-static void ag71xx_hw_set_macaddr(struct ag71xx *ag, unsigned char *mac)
+static void ag71xx_hw_set_macaddr(struct ag71xx *ag, const unsigned char *mac)
 {
 	u32 t;
 
@@ -407,11 +407,11 @@ static void ag71xx_dma_reset(struct ag71xx *ag)
 			 FIFO_CFG4_VT)
 
 #define FIFO_CFG5_INIT	(FIFO_CFG5_DE | FIFO_CFG5_DV | FIFO_CFG5_FC | \
-			 FIFO_CFG5_CE | FIFO_CFG5_LO | FIFO_CFG5_OK | \
-			 FIFO_CFG5_MC | FIFO_CFG5_BC | FIFO_CFG5_DR | \
-			 FIFO_CFG5_CF | FIFO_CFG5_PF | FIFO_CFG5_VT | \
-			 FIFO_CFG5_LE | FIFO_CFG5_FT | FIFO_CFG5_16 | \
-			 FIFO_CFG5_17 | FIFO_CFG5_SF)
+			 FIFO_CFG5_CE | FIFO_CFG5_LM | FIFO_CFG5_LO | \
+			 FIFO_CFG5_OK | FIFO_CFG5_MC | FIFO_CFG5_BC | \
+			 FIFO_CFG5_DR | FIFO_CFG5_CF | FIFO_CFG5_UO | \
+			 FIFO_CFG5_VT | FIFO_CFG5_LE | FIFO_CFG5_FT | \
+			 FIFO_CFG5_UC | FIFO_CFG5_SF)
 
 static void ag71xx_hw_stop(struct ag71xx *ag)
 {
@@ -453,8 +453,12 @@ static void ag71xx_hw_init(struct ag71xx *ag)
 	udelay(20);
 
 	reset_control_assert(ag->mac_reset);
+	if (ag->mdio_reset)
+		reset_control_assert(ag->mdio_reset);
 	msleep(100);
 	reset_control_deassert(ag->mac_reset);
+	if (ag->mdio_reset)
+		reset_control_deassert(ag->mdio_reset);
 	msleep(200);
 
 	ag71xx_hw_setup(ag);
@@ -474,7 +478,7 @@ static void ag71xx_fast_reset(struct ag71xx *ag)
 	mii_reg = ag71xx_rr(ag, AG71XX_REG_MII_CFG);
 	rx_ds = ag71xx_rr(ag, AG71XX_REG_RX_DESC);
 
-	ag71xx_tx_packets(ag, true);
+	ag71xx_tx_packets(ag, true, 0);
 
 	reset_control_assert(ag->mac_reset);
 	udelay(10);
@@ -555,6 +559,219 @@ static void ath79_set_pll(struct ag71xx *ag)
 	udelay(100);
 }
 
+static void ag71xx_bit_set(void __iomem *reg, u32 bit)
+{
+	u32 val;
+
+	val = __raw_readl(reg) | bit;
+	__raw_writel(val, reg);
+	__raw_readl(reg);
+}
+
+static void ag71xx_bit_clear(void __iomem *reg, u32 bit)
+{
+	u32 val;
+
+	val = __raw_readl(reg) & ~bit;
+	__raw_writel(val, reg);
+	__raw_readl(reg);
+}
+
+static void ag71xx_sgmii_serdes_init_qca956x(struct device_node *np)
+{
+	struct device_node *np_dev;
+	void __iomem *gmac_base;
+	u32 serdes_cal;
+	u32 t;
+
+	np = of_get_child_by_name(np, "gmac-config");
+	if (!np)
+		return;
+
+	if (of_property_read_u32(np, "serdes-cal", &serdes_cal))
+		/* By default, use middle value for resistor calibration */
+		serdes_cal = 0x7;
+
+	np_dev = of_parse_phandle(np, "device", 0);
+	if (!np_dev)
+		goto out;
+
+	gmac_base = of_iomap(np_dev, 0);
+	if (!gmac_base) {
+		pr_err("%pOF: can't map GMAC registers\n", np_dev);
+		goto err_iomap;
+	}
+
+	t = __raw_readl(gmac_base + QCA956X_GMAC_REG_SGMII_CONFIG);
+	t &= ~(QCA956X_SGMII_CONFIG_MODE_CTRL_MASK << QCA956X_SGMII_CONFIG_MODE_CTRL_SHIFT);
+	t |= QCA956X_SGMII_CONFIG_MODE_CTRL_SGMII_MAC;
+	__raw_writel(t, gmac_base + QCA956X_GMAC_REG_SGMII_CONFIG);
+
+	pr_debug("%pOF: fixup SERDES calibration to value %i\n",
+		np_dev, serdes_cal);
+	t = __raw_readl(gmac_base + QCA956X_GMAC_REG_SGMII_SERDES);
+	t &= ~(QCA956X_SGMII_SERDES_RES_CALIBRATION_MASK
+			<< QCA956X_SGMII_SERDES_RES_CALIBRATION_SHIFT);
+	t |= (serdes_cal & QCA956X_SGMII_SERDES_RES_CALIBRATION_MASK)
+			<< QCA956X_SGMII_SERDES_RES_CALIBRATION_SHIFT;
+	__raw_writel(t, gmac_base + QCA956X_GMAC_REG_SGMII_SERDES);
+
+	ath79_pll_wr(QCA956X_PLL_ETH_SGMII_SERDES_REG,
+			QCA956X_PLL_ETH_SGMII_SERDES_LOCK_DETECT
+					| QCA956X_PLL_ETH_SGMII_SERDES_EN_PLL);
+
+	t = __raw_readl(gmac_base + QCA956X_GMAC_REG_SGMII_SERDES);
+
+	/* missing in QCA u-boot code, clear before setting */
+	t &= ~(QCA956X_SGMII_SERDES_CDR_BW_MASK
+			<< QCA956X_SGMII_SERDES_CDR_BW_SHIFT |
+		QCA956X_SGMII_SERDES_TX_DR_CTRL_MASK
+			<< QCA956X_SGMII_SERDES_TX_DR_CTRL_SHIFT |
+		QCA956X_SGMII_SERDES_VCO_REG_MASK
+			<< QCA956X_SGMII_SERDES_VCO_REG_SHIFT);
+
+	t |= (3 << QCA956X_SGMII_SERDES_CDR_BW_SHIFT) |
+		(1 << QCA956X_SGMII_SERDES_TX_DR_CTRL_SHIFT) |
+		QCA956X_SGMII_SERDES_PLL_BW |
+		QCA956X_SGMII_SERDES_EN_SIGNAL_DETECT |
+		QCA956X_SGMII_SERDES_FIBER_SDO |
+		(3 << QCA956X_SGMII_SERDES_VCO_REG_SHIFT);
+
+	__raw_writel(t, gmac_base + QCA956X_GMAC_REG_SGMII_SERDES);
+
+	ath79_device_reset_clear(QCA956X_RESET_SGMII_ANALOG);
+	ath79_device_reset_clear(QCA956X_RESET_SGMII);
+
+	while (!(__raw_readl(gmac_base + QCA956X_GMAC_REG_SGMII_SERDES)
+			& QCA956X_SGMII_SERDES_LOCK_DETECT_STATUS))
+		;
+
+	iounmap(gmac_base);
+err_iomap:
+	of_node_put(np_dev);
+out:
+	of_node_put(np);
+}
+
+static void ag71xx_sgmii_init_qca955x(struct device_node *np)
+{
+	struct device_node *np_dev;
+	void __iomem *gmac_base;
+	u32 mr_an_status;
+	u32 sgmii_status;
+	u8 tries = 0;
+	int err = 0;
+
+	np = of_get_child_by_name(np, "gmac-config");
+	if (!np)
+		return;
+
+	np_dev = of_parse_phandle(np, "device", 0);
+	if (!np_dev)
+		goto out;
+
+	gmac_base = of_iomap(np_dev, 0);
+	if (!gmac_base) {
+		pr_err("%pOF: can't map GMAC registers\n", np_dev);
+		err = -ENOMEM;
+		goto err_iomap;
+	}
+
+	mr_an_status = __raw_readl(gmac_base + QCA955X_GMAC_REG_MR_AN_STATUS);
+	if (!(mr_an_status & QCA955X_MR_AN_STATUS_AN_ABILITY))
+		goto sgmii_out;
+
+	/* SGMII reset sequence */
+	__raw_writel(QCA955X_SGMII_RESET_RX_CLK_N_RESET,
+		     gmac_base + QCA955X_GMAC_REG_SGMII_RESET);
+	__raw_readl(gmac_base + QCA955X_GMAC_REG_SGMII_RESET);
+	udelay(10);
+
+	ag71xx_bit_set(gmac_base + QCA955X_GMAC_REG_SGMII_RESET,
+		       QCA955X_SGMII_RESET_HW_RX_125M_N);
+	udelay(10);
+
+	ag71xx_bit_set(gmac_base + QCA955X_GMAC_REG_SGMII_RESET,
+		       QCA955X_SGMII_RESET_RX_125M_N);
+	udelay(10);
+
+	ag71xx_bit_set(gmac_base + QCA955X_GMAC_REG_SGMII_RESET,
+		       QCA955X_SGMII_RESET_TX_125M_N);
+	udelay(10);
+
+	ag71xx_bit_set(gmac_base + QCA955X_GMAC_REG_SGMII_RESET,
+		       QCA955X_SGMII_RESET_RX_CLK_N);
+	udelay(10);
+
+	ag71xx_bit_set(gmac_base + QCA955X_GMAC_REG_SGMII_RESET,
+		       QCA955X_SGMII_RESET_TX_CLK_N);
+	udelay(10);
+
+	/*
+	 * The following is what QCA has to say about what happens here:
+	 *
+	 * Across resets SGMII link status goes to weird state.
+	 * If SGMII_DEBUG register reads other than 0x1f or 0x10,
+	 * we are for sure in a bad  state.
+	 *
+	 * Issue a PHY reset in MR_AN_CONTROL to keep going.
+	 */
+	do {
+		ag71xx_bit_set(gmac_base + QCA955X_GMAC_REG_MR_AN_CONTROL,
+			       QCA955X_MR_AN_CONTROL_PHY_RESET |
+			       QCA955X_MR_AN_CONTROL_AN_ENABLE);
+		udelay(200);
+		ag71xx_bit_clear(gmac_base + QCA955X_GMAC_REG_MR_AN_CONTROL,
+				 QCA955X_MR_AN_CONTROL_PHY_RESET);
+		mdelay(300);
+		sgmii_status = __raw_readl(gmac_base + QCA955X_GMAC_REG_SGMII_DEBUG) &
+					   QCA955X_SGMII_DEBUG_TX_STATE_MASK;
+
+		if (tries++ >= 20) {
+			pr_err("ag71xx: max retries for SGMII fixup exceeded\n");
+			break;
+		}
+	} while (!(sgmii_status == 0xf || sgmii_status == 0x10));
+
+sgmii_out:
+	iounmap(gmac_base);
+err_iomap:
+	of_node_put(np_dev);
+out:
+	of_node_put(np);
+}
+
+static void ag71xx_mux_select_sgmii_qca956x(struct device_node *np)
+{
+	struct device_node *np_dev;
+	void __iomem *gmac_base;
+	u32 t;
+
+	np = of_get_child_by_name(np, "gmac-config");
+	if (!np)
+		return;
+
+	np_dev = of_parse_phandle(np, "device", 0);
+	if (!np_dev)
+		goto out;
+
+	gmac_base = of_iomap(np_dev, 0);
+	if (!gmac_base) {
+		pr_err("%pOF: can't map GMAC registers\n", np_dev);
+		goto err_iomap;
+	}
+
+	t = __raw_readl(gmac_base + QCA956X_GMAC_REG_ETH_CFG);
+	t |= QCA956X_ETH_CFG_GE0_SGMII;
+	__raw_writel(t, gmac_base + QCA956X_GMAC_REG_ETH_CFG);
+
+	iounmap(gmac_base);
+err_iomap:
+	of_node_put(np_dev);
+out:
+	of_node_put(np);
+}
+
 static void ath79_mii_ctrl_set_if(struct ag71xx *ag, unsigned int mii_if)
 {
 	u32 t;
@@ -577,6 +794,9 @@ static void ath79_mii0_ctrl_set_if(struct ag71xx *ag)
 		mii_if = AR71XX_MII0_CTRL_IF_GMII;
 		break;
 	case PHY_INTERFACE_MODE_RGMII:
+	case PHY_INTERFACE_MODE_RGMII_ID:
+	case PHY_INTERFACE_MODE_RGMII_RXID:
+	case PHY_INTERFACE_MODE_RGMII_TXID:
 		mii_if = AR71XX_MII0_CTRL_IF_RGMII;
 		break;
 	case PHY_INTERFACE_MODE_RMII:
@@ -599,6 +819,9 @@ static void ath79_mii1_ctrl_set_if(struct ag71xx *ag)
 		mii_if = AR71XX_MII1_CTRL_IF_RMII;
 		break;
 	case PHY_INTERFACE_MODE_RGMII:
+	case PHY_INTERFACE_MODE_RGMII_ID:
+	case PHY_INTERFACE_MODE_RGMII_RXID:
+	case PHY_INTERFACE_MODE_RGMII_TXID:
 		mii_if = AR71XX_MII1_CTRL_IF_RGMII;
 		break;
 	default:
@@ -701,6 +924,8 @@ __ag71xx_link_adjust(struct ag71xx *ag, bool update)
 			   of_device_is_compatible(np, "qca,qca9550-eth") ||
 			   of_device_is_compatible(np, "qca,qca9560-eth")) {
 			ath79_set_pllval(ag);
+			if (of_property_read_bool(np, "qca955x-sgmii-fixup"))
+				ag71xx_sgmii_init_qca955x(np);
 		}
 	}
 
@@ -716,7 +941,7 @@ __ag71xx_link_adjust(struct ag71xx *ag, bool update)
 		 * The wr, rr functions cannot be used since this hidden register
 		 * is outside of the normal ag71xx register block.
 		 */
-		void __iomem *dam = ioremap_nocache(0xb90001bc, 0x4);
+		void __iomem *dam = ioremap(0xb90001bc, 0x4);
 		if (dam) {
 			__raw_writel(__raw_readl(dam) & ~BIT(27), dam);
 			(void)__raw_readl(dam);
@@ -759,10 +984,6 @@ static int ag71xx_hw_enable(struct ag71xx *ag)
 
 static void ag71xx_hw_disable(struct ag71xx *ag)
 {
-	unsigned long flags;
-
-	spin_lock_irqsave(&ag->lock, flags);
-
 	netif_stop_queue(ag->dev);
 
 	ag71xx_hw_stop(ag);
@@ -770,8 +991,6 @@ static void ag71xx_hw_disable(struct ag71xx *ag)
 
 	napi_disable(&ag->napi);
 	del_timer_sync(&ag->oom_timer);
-
-	spin_unlock_irqrestore(&ag->lock, flags);
 
 	ag71xx_rings_cleanup(ag);
 }
@@ -888,7 +1107,7 @@ static netdev_tx_t ag71xx_hard_start_xmit(struct sk_buff *skb,
 		goto err_drop;
 	}
 
-	dma_addr = dma_map_single(&dev->dev, skb->data, skb->len,
+	dma_addr = dma_map_single(&ag->pdev->dev, skb->data, skb->len,
 				  DMA_TO_DEVICE);
 
 	i = ring->curr & ring_mask;
@@ -930,7 +1149,7 @@ static netdev_tx_t ag71xx_hard_start_xmit(struct sk_buff *skb,
 	return NETDEV_TX_OK;
 
 err_drop_unmap:
-	dma_unmap_single(&dev->dev, dma_addr, skb->len, DMA_TO_DEVICE);
+	dma_unmap_single(&ag->pdev->dev, dma_addr, skb->len, DMA_TO_DEVICE);
 
 err_drop:
 	dev->stats.tx_dropped++;
@@ -942,54 +1161,21 @@ err_drop:
 static int ag71xx_do_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 {
 	struct ag71xx *ag = netdev_priv(dev);
-	int ret;
 
-	switch (cmd) {
-	case SIOCETHTOOL:
-		if (ag->phy_dev == NULL)
-			break;
+	if (ag->phy_dev == NULL)
+		return -ENODEV;
 
-		spin_lock_irq(&ag->lock);
-		ret = phy_ethtool_ioctl(ag->phy_dev, (void *) ifr->ifr_data);
-		spin_unlock_irq(&ag->lock);
-		return ret;
-
-	case SIOCSIFHWADDR:
-		if (copy_from_user
-			(dev->dev_addr, ifr->ifr_data, sizeof(dev->dev_addr)))
-			return -EFAULT;
-		return 0;
-
-	case SIOCGIFHWADDR:
-		if (copy_to_user
-			(ifr->ifr_data, dev->dev_addr, sizeof(dev->dev_addr)))
-			return -EFAULT;
-		return 0;
-
-	case SIOCGMIIPHY:
-	case SIOCGMIIREG:
-	case SIOCSMIIREG:
-		if (ag->phy_dev == NULL)
-			break;
-
-		return phy_mii_ioctl(ag->phy_dev, ifr, cmd);
-
-	default:
-		break;
-	}
-
-	return -EOPNOTSUPP;
+	return phy_mii_ioctl(ag->phy_dev, ifr, cmd);
 }
 
-static void ag71xx_oom_timer_handler(unsigned long data)
+static void ag71xx_oom_timer_handler(struct timer_list *t)
 {
-	struct net_device *dev = (struct net_device *) data;
-	struct ag71xx *ag = netdev_priv(dev);
+	struct ag71xx *ag = from_timer(ag, t, oom_timer);
 
 	napi_schedule(&ag->napi);
 }
 
-static void ag71xx_tx_timeout(struct net_device *dev)
+static void ag71xx_tx_timeout(struct net_device *dev, unsigned int txqueue)
 {
 	struct ag71xx *ag = netdev_priv(dev);
 
@@ -1036,7 +1222,7 @@ static bool ag71xx_check_dma_stuck(struct ag71xx *ag)
 	return false;
 }
 
-static int ag71xx_tx_packets(struct ag71xx *ag, bool flush)
+static int ag71xx_tx_packets(struct ag71xx *ag, bool flush, int budget)
 {
 	struct ag71xx_ring *ring = &ag->tx_ring;
 	bool dma_stuck = false;
@@ -1069,7 +1255,7 @@ static int ag71xx_tx_packets(struct ag71xx *ag, bool flush)
 		if (!skb)
 			continue;
 
-		dev_kfree_skb_any(skb);
+		napi_consume_skb(skb, budget);
 		ring->buf[i].skb = NULL;
 
 		bytes_compl += ring->buf[i].len;
@@ -1109,14 +1295,13 @@ static int ag71xx_rx_packets(struct ag71xx *ag, int limit)
 	unsigned int offset = ag->rx_buf_offset;
 	int ring_mask = BIT(ring->order) - 1;
 	int ring_size = BIT(ring->order);
-	struct sk_buff_head queue;
+	struct list_head rx_list;
 	struct sk_buff *skb;
 	int done = 0;
 
 	DBG("%s: rx packets, limit=%d, curr=%u, dirty=%u\n",
 			dev->name, limit, ring->curr, ring->dirty);
-
-	skb_queue_head_init(&queue);
+	INIT_LIST_HEAD(&rx_list);
 
 	while (done < limit) {
 		unsigned int i = ring->curr & ring_mask;
@@ -1137,13 +1322,13 @@ static int ag71xx_rx_packets(struct ag71xx *ag, int limit)
 		pktlen = desc->ctrl & pktlen_mask;
 		pktlen -= ETH_FCS_LEN;
 
-		dma_unmap_single(&dev->dev, ring->buf[i].dma_addr,
+		dma_unmap_single(&ag->pdev->dev, ring->buf[i].dma_addr,
 				 ag->rx_buf_size, DMA_FROM_DEVICE);
 
 		dev->stats.rx_packets++;
 		dev->stats.rx_bytes += pktlen;
 
-		skb = build_skb(ring->buf[i].rx_buf, ag71xx_buffer_size(ag));
+		skb = napi_build_skb(ring->buf[i].rx_buf, ag71xx_buffer_size(ag));
 		if (!skb) {
 			skb_free_frag(ring->buf[i].rx_buf);
 			goto next;
@@ -1158,7 +1343,7 @@ static int ag71xx_rx_packets(struct ag71xx *ag, int limit)
 		} else {
 			skb->dev = dev;
 			skb->ip_summed = CHECKSUM_NONE;
-			__skb_queue_tail(&queue, skb);
+			list_add_tail(&skb->list, &rx_list);
 		}
 
 next:
@@ -1170,10 +1355,9 @@ next:
 
 	ag71xx_ring_rx_refill(ag);
 
-	while ((skb = __skb_dequeue(&queue)) != NULL) {
+	list_for_each_entry(skb, &rx_list, list)
 		skb->protocol = eth_type_trans(skb, dev);
-		netif_receive_skb(skb);
-	}
+	netif_receive_skb_list(&rx_list);
 
 	DBG("%s: rx finish, curr=%u, dirty=%u, done=%d\n",
 		dev->name, ring->curr, ring->dirty, done);
@@ -1192,7 +1376,7 @@ static int ag71xx_poll(struct napi_struct *napi, int limit)
 	int tx_done;
 	int rx_done;
 
-	tx_done = ag71xx_tx_packets(ag, false);
+	tx_done = ag71xx_tx_packets(ag, false, limit);
 
 	DBG("%s: processing RX ring\n", dev->name);
 	rx_done = ag71xx_rx_packets(ag, limit);
@@ -1279,20 +1463,6 @@ static irqreturn_t ag71xx_interrupt(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-#ifdef CONFIG_NET_POLL_CONTROLLER
-/*
- * Polling 'interrupt' - used by things like netconsole to send skbs
- * without having to re-enable interrupts. It's not called while
- * the interrupt routine is executing.
- */
-static void ag71xx_netpoll(struct net_device *dev)
-{
-	disable_irq(dev->irq);
-	ag71xx_interrupt(dev->irq, dev);
-	enable_irq(dev->irq);
-}
-#endif
-
 static int ag71xx_change_mtu(struct net_device *dev, int new_mtu)
 {
 	struct ag71xx *ag = netdev_priv(dev);
@@ -1308,57 +1478,37 @@ static const struct net_device_ops ag71xx_netdev_ops = {
 	.ndo_open		= ag71xx_open,
 	.ndo_stop		= ag71xx_stop,
 	.ndo_start_xmit		= ag71xx_hard_start_xmit,
-	.ndo_do_ioctl		= ag71xx_do_ioctl,
+	.ndo_eth_ioctl		= ag71xx_do_ioctl,
 	.ndo_tx_timeout		= ag71xx_tx_timeout,
 	.ndo_change_mtu		= ag71xx_change_mtu,
 	.ndo_set_mac_address	= eth_mac_addr,
 	.ndo_validate_addr	= eth_validate_addr,
-#ifdef CONFIG_NET_POLL_CONTROLLER
-	.ndo_poll_controller	= ag71xx_netpoll,
-#endif
 };
-
-static const char *ag71xx_get_phy_if_mode_name(phy_interface_t mode)
-{
-	switch (mode) {
-	case PHY_INTERFACE_MODE_MII:
-		return "MII";
-	case PHY_INTERFACE_MODE_GMII:
-		return "GMII";
-	case PHY_INTERFACE_MODE_RMII:
-		return "RMII";
-	case PHY_INTERFACE_MODE_RGMII:
-		return "RGMII";
-	case PHY_INTERFACE_MODE_SGMII:
-		return "SGMII";
-	default:
-		break;
-	}
-
-	return "unknown";
-}
 
 static int ag71xx_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
-	struct device_node *mdio_node;
 	struct net_device *dev;
 	struct resource *res;
 	struct ag71xx *ag;
-	const void *mac_addr;
 	u32 max_frame_len;
 	int tx_size, err;
 
 	if (!np)
 		return -ENODEV;
 
-	dev = alloc_etherdev(sizeof(*ag));
+	dev = devm_alloc_etherdev(&pdev->dev, sizeof(*ag));
 	if (!dev)
 		return -ENOMEM;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!res)
 		return -EINVAL;
+
+	if (of_property_read_bool(np, "qca956x-serdes-fixup")) {
+		ag71xx_sgmii_serdes_init_qca956x(np);
+		ag71xx_sgmii_init_qca955x(np);
+	}
 
 	err = ag71xx_setup_gmac(np);
 	if (err)
@@ -1373,12 +1523,13 @@ static int ag71xx_probe(struct platform_device *pdev)
 					AG71XX_DEFAULT_MSG_ENABLE);
 	spin_lock_init(&ag->lock);
 
-	ag->mac_reset = devm_reset_control_get(&pdev->dev, "mac");
+	ag->mac_reset = devm_reset_control_get_exclusive(&pdev->dev, "mac");
 	if (IS_ERR(ag->mac_reset)) {
 		dev_err(&pdev->dev, "missing mac reset\n");
-		err = PTR_ERR(ag->mac_reset);
-		goto err_free;
+		return PTR_ERR(ag->mac_reset);
 	}
+
+	ag->mdio_reset = devm_reset_control_get_optional_exclusive(&pdev->dev, "mdio");
 
 	if (of_property_read_u32_array(np, "fifo-data", ag->fifodata, 3)) {
 		if (of_device_is_compatible(np, "qca,ar9130-eth") ||
@@ -1408,28 +1559,31 @@ static int ag71xx_probe(struct platform_device *pdev)
 		ag->pllregmap = NULL;
 	}
 
-	ag->mac_base = devm_ioremap_nocache(&pdev->dev, res->start,
-					    res->end - res->start + 1);
-	if (!ag->mac_base) {
-		err = -ENOMEM;
-		goto err_free;
-	}
+	ag->mac_base = devm_ioremap(&pdev->dev, res->start,
+				    res->end - res->start + 1);
+	if (!ag->mac_base)
+		return -ENOMEM;
+
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
 	if (res) {
-		ag->mii_base = devm_ioremap_nocache(&pdev->dev, res->start,
+		ag->mii_base = devm_ioremap(&pdev->dev, res->start,
 					    res->end - res->start + 1);
-		if (!ag->mii_base) {
-			err = -ENOMEM;
-			goto err_free;
-		}
+		if (!ag->mii_base)
+			return -ENOMEM;
 	}
+
+	/* ensure that HW is in manual polling mode before interrupts are
+	 * activated. Otherwise ag71xx_interrupt might call napi_schedule
+	 * before it is initialized by netif_napi_add.
+	 */
+	ag71xx_int_disable(ag, AG71XX_INT_POLL);
 
 	dev->irq = platform_get_irq(pdev, 0);
 	err = devm_request_irq(&pdev->dev, dev->irq, ag71xx_interrupt,
 			       0x0, dev_name(&pdev->dev), dev);
 	if (err) {
 		dev_err(&pdev->dev, "unable to request IRQ %d\n", dev->irq);
-		goto err_free;
+		return err;
 	}
 
 	dev->netdev_ops = &ag71xx_netdev_ops;
@@ -1437,9 +1591,7 @@ static int ag71xx_probe(struct platform_device *pdev)
 
 	INIT_DELAYED_WORK(&ag->restart_work, ag71xx_restart_work_func);
 
-	init_timer(&ag->oom_timer);
-	ag->oom_timer.data = (unsigned long) dev;
-	ag->oom_timer.function = ag71xx_oom_timer_handler;
+	timer_setup(&ag->oom_timer, ag71xx_oom_timer_handler, 0);
 
 	tx_size = AG71XX_TX_RING_SIZE_DEFAULT;
 	ag->rx_ring.order = ag71xx_ring_size_order(AG71XX_RX_RING_SIZE_DEFAULT);
@@ -1462,7 +1614,14 @@ static int ag71xx_probe(struct platform_device *pdev)
 	dev->min_mtu = 68;
 	dev->max_mtu = max_frame_len - ag71xx_max_frame_len(0);
 
-	if (of_device_is_compatible(np, "qca,ar7240-eth"))
+	if (of_device_is_compatible(np, "qca,ar7240-eth") ||
+	    of_device_is_compatible(np, "qca,ar7241-eth") ||
+	    of_device_is_compatible(np, "qca,ar7242-eth") ||
+	    of_device_is_compatible(np, "qca,ar9330-eth") ||
+	    of_device_is_compatible(np, "qca,ar9340-eth") ||
+	    of_device_is_compatible(np, "qca,qca9530-eth") ||
+	    of_device_is_compatible(np, "qca,qca9550-eth") ||
+	    of_device_is_compatible(np, "qca,qca9560-eth"))
 		ag->tx_hang_workaround = 1;
 
 	ag->rx_buf_offset = NET_SKB_PAD;
@@ -1480,26 +1639,30 @@ static int ag71xx_probe(struct platform_device *pdev)
 					    sizeof(struct ag71xx_desc),
 					    &ag->stop_desc_dma, GFP_KERNEL);
 	if (!ag->stop_desc)
-		goto err_free;
+		return -ENOMEM;
 
 	ag->stop_desc->data = 0;
 	ag->stop_desc->ctrl = 0;
 	ag->stop_desc->next = (u32) ag->stop_desc_dma;
 
-	mac_addr = of_get_mac_address(np);
-	if (mac_addr)
-		memcpy(dev->dev_addr, mac_addr, ETH_ALEN);
-	if (!mac_addr || !is_valid_ether_addr(dev->dev_addr)) {
+	err = of_get_ethdev_address(np, dev);
+	if (err) {
+		if (err == -EPROBE_DEFER)
+			return err;
+
 		dev_err(&pdev->dev, "invalid MAC address, using random address\n");
-		eth_random_addr(dev->dev_addr);
+		eth_hw_addr_random(dev);
 	}
 
-	ag->phy_if_mode = of_get_phy_mode(np);
-	if (ag->phy_if_mode < 0) {
+	err = of_get_phy_mode(np, &ag->phy_if_mode);
+	if (err < 0) {
 		dev_err(&pdev->dev, "missing phy-mode property in DT\n");
-		err = ag->phy_if_mode;
-		goto err_free;
+		return ag->phy_if_mode;
 	}
+
+	if (of_device_is_compatible(np, "qca,qca9560-eth") &&
+	    ag->phy_if_mode == PHY_INTERFACE_MODE_SGMII)
+		ag71xx_mux_select_sgmii_qca956x(np);
 
 	if (of_property_read_u32(np, "qca,mac-idx", &ag->mac_idx))
 		ag->mac_idx = -1;
@@ -1515,7 +1678,7 @@ static int ag71xx_probe(struct platform_device *pdev)
 			break;
 		}
 
-	netif_napi_add(dev, &ag->napi, ag71xx_poll, AG71XX_NAPI_WEIGHT);
+	netif_napi_add_weight(dev, &ag->napi, ag71xx_poll, AG71XX_NAPI_WEIGHT);
 
 	ag71xx_dump_regs(ag);
 
@@ -1525,15 +1688,23 @@ static int ag71xx_probe(struct platform_device *pdev)
 
 	ag71xx_dump_regs(ag);
 
-	if (!of_device_is_compatible(np, "simple-mfd")) {
-		mdio_node = of_get_child_by_name(np, "mdio-bus");
-		if (!IS_ERR(mdio_node))
-			of_platform_device_create(mdio_node, NULL, NULL);
+	/*
+	 * populate current node to register mdio-bus as a subdevice.
+	 * the mdio bus works independently on ar7241 and later chips
+	 * and we need to load mdio1 before gmac0, which can be done
+	 * by adding a "simple-mfd" compatible to gmac node. The
+	 * following code checks OF_POPULATED_BUS flag before populating
+	 * to avoid duplicated population.
+	 */
+	if (!of_node_check_flag(np, OF_POPULATED_BUS)) {
+		err = of_platform_populate(np, NULL, NULL, &pdev->dev);
+		if (err)
+			return err;
 	}
 
 	err = ag71xx_phy_connect(ag);
 	if (err)
-		goto err_free;
+		return err;
 
 	err = ag71xx_debugfs_init(ag);
 	if (err)
@@ -1549,16 +1720,14 @@ static int ag71xx_probe(struct platform_device *pdev)
 		goto err_phy_disconnect;
 	}
 
-	pr_info("%s: Atheros AG71xx at 0x%08lx, irq %d, mode:%s\n",
+	pr_info("%s: Atheros AG71xx at 0x%08lx, irq %d, mode: %s\n",
 		dev->name, (unsigned long) ag->mac_base, dev->irq,
-		ag71xx_get_phy_if_mode_name(ag->phy_if_mode));
+		phy_modes(ag->phy_if_mode));
 
 	return 0;
 
 err_phy_disconnect:
 	ag71xx_phy_disconnect(ag);
-err_free:
-	free_netdev(dev);
 	return err;
 }
 
@@ -1574,11 +1743,7 @@ static int ag71xx_remove(struct platform_device *pdev)
 	ag71xx_debugfs_exit(ag);
 	ag71xx_phy_disconnect(ag);
 	unregister_netdev(dev);
-	free_irq(dev->irq, dev);
-	iounmap(ag->mac_base);
-	kfree(dev);
 	platform_set_drvdata(pdev, NULL);
-
 	return 0;
 }
 

@@ -8,12 +8,14 @@ include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/target.mk
 
 PKG_NAME:=fortify-headers
-PKG_VERSION:=1.0
-PKG_RELEASE=1
+PKG_VERSION:=1.1
+PKG_RELEASE=3
 
-PKG_SOURCE_URL:=http://dl.2f30.org/releases
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
-PKG_HASH:=026e4cc0f2aa69b7922b1bc8838491048b497faf1c8b20450741114f9ea3775b
+PKG_SOURCE_PROTO:=git
+PKG_SOURCE_URL:=https://github.com/jvoisin/$(PKG_NAME).git
+PKG_SOURCE_DATE:=2019-04-14
+PKG_SOURCE_VERSION:=e3fee64643279c144efd3d6856ed4e818c0d5ca2
+PKG_MIRROR_HASH:=f2ce18b031aecbf43d18142941ece7c90691a8b4e96fbb1d5af94f24e5572dad
 
 include $(INCLUDE_DIR)/toolchain-build.mk
 

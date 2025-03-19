@@ -17,6 +17,7 @@ proto_3g_init_config() {
 	proto_config_add_string "apn"
 	proto_config_add_string "service"
 	proto_config_add_string "pincode"
+	proto_config_add_string "delay"
 	proto_config_add_string "dialnumber"
 }
 
@@ -29,6 +30,7 @@ proto_3g_setup() {
 	json_get_var service service
 	json_get_var pincode pincode
 	json_get_var dialnumber dialnumber
+	json_get_var delay delay
 
 	[ -n "$dat_device" ] && device=$dat_device
 
@@ -37,6 +39,8 @@ proto_3g_setup() {
 		proto_set_available "$interface" 0
 		return 1
 	}
+
+	[ -n "$delay" ] && sleep "$delay"
 
 	case "$service" in
 		cdma|evdo)
@@ -68,6 +72,8 @@ proto_3g_setup() {
 					*) CODE="2,2";;
 				esac
 				export MODE="AT^SYSCFG=${CODE},3FFFFFFF,2,4"
+			elif echo "$cardinfo" | grep -q "MikroTik"; then
+				COMMAND="AT+CFUN=1" gcom -d "$device" -s /etc/gcom/runcommand.gcom || return 1
 			fi
 
 			if [ -n "$pincode" ]; then

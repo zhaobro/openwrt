@@ -8,13 +8,15 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=restool
-PKG_VERSION:=lsdk-1806
+PKG_VERSION:=6.6.23.2.0.0
 PKG_RELEASE:=1
 
 PKG_SOURCE_PROTO:=git
-PKG_SOURCE_URL:=https://source.codeaurora.org/external/qoriq/qoriq-components/restool
-PKG_SOURCE_VERSION:=2815572ab25029a8fb47f0dc6a0b56ae5ff76713
-PKG_MIRROR_HASH:=cf76a8fd1239bb9b7696c25d5c26c6e81ea73497ad1ada9488390daf0ef7c291
+PKG_SOURCE_URL:=https://github.com/nxp-qoriq/restool
+PKG_SOURCE_VERSION:=lf-6.6.23-2.0.0
+PKG_MIRROR_HASH:=e669c9faf5a00e36d763dbbd6dd866d878b0101df086582c38908d281fa3b465
+
+PKG_FLAGS:=nonshared
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -22,7 +24,7 @@ define Package/restool
   SECTION:=net
   CATEGORY:=Network
   TITLE:=Layerscape DPAA2 dynamical management tool
-  DEPENDS:=@TARGET_layerscape
+  DEPENDS:=@TARGET_layerscape_armv8_64b
 endef
 
 MAKE_FLAGS += \

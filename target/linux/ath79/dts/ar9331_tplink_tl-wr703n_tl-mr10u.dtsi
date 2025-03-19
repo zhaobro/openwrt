@@ -1,23 +1,21 @@
 // SPDX-License-Identifier: GPL-2.0-or-later OR MIT
-/dts-v1/;
+
+#include "ar9331.dtsi"
 
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/input/input.h>
 
-#include "ar9331.dtsi"
-
 / {
 	aliases {
-		serial0 = &uart;
-		led-boot = &system;
-		led-failsafe = &system;
-		led-running = &system;
-		led-upgrade = &system;
+		led-boot = &led_system;
+		led-failsafe = &led_system;
+		led-running = &led_system;
+		led-upgrade = &led_system;
+		label-mac-device = &eth0;
 	};
 
 	keys {
-		compatible = "gpio-keys-polled";
-		poll-interval = <20>;
+		compatible = "gpio-keys";
 
 		reset {
 			label = "reset";
@@ -30,8 +28,8 @@
 	leds {
 		compatible = "gpio-leds";
 
-		system: system {
-			label = "tl-wr703n:blue:system";
+		led_system: system {
+			label = "blue:system";
 			gpios = <&gpio 27 GPIO_ACTIVE_LOW>;
 		};
 	};
@@ -43,12 +41,10 @@
 		regulator-max-microvolt = <5000000>;
 		enable-active-high;
 	};
-
 };
 
 &spi {
 	status = "okay";
-	num-cs = <1>;
 
 	flash@0 {
 		compatible = "jedec,spi-nor";
@@ -64,18 +60,38 @@
 				reg = <0x0 0x20000>;
 				label = "u-boot";
 				read-only;
+
+				nvmem-layout {
+					compatible = "fixed-layout";
+					#address-cells = <1>;
+					#size-cells = <1>;
+
+					macaddr_uboot_1fc00: macaddr@1fc00 {
+						reg = <0x1fc00 0x6>;
+					};
+				};
 			};
 
-			firmware: partition@20000 {
+			partition@20000 {
 				compatible = "tplink,firmware";
 				reg = <0x20000 0x3d0000>;
 				label = "firmware";
 			};
 
-			art: partition@3f0000 {
+			partition@3f0000 {
 				reg = <0x3f0000 0x10000>;
 				label = "art";
 				read-only;
+
+				nvmem-layout {
+					compatible = "fixed-layout";
+					#address-cells = <1>;
+					#size-cells = <1>;
+
+					cal_art_1000: calibration@1000 {
+						reg = <0x1000 0x440>;
+					};
+				};
 			};
 		};
 	};
@@ -84,7 +100,8 @@
 &eth0 {
 	status = "okay";
 
-	mtd-mac-address = <&uboot 0x1fc00>;
+	nvmem-cells = <&macaddr_uboot_1fc00>;
+	nvmem-cell-names = "mac-address";
 
 	gmac-config {
 		device = <&gmac>;
@@ -96,15 +113,8 @@
 
 &eth1 {
 	status = "okay";
+
 	compatible = "syscon", "simple-mfd";
-};
-
-&gpio {
-	status = "okay";
-};
-
-&uart {
-	status = "okay";
 };
 
 &usb {
@@ -119,6 +129,7 @@
 
 &wmac {
 	status = "okay";
-	mtd-cal-data = <&art 0x1000>;
-	mtd-mac-address = <&uboot 0x1fc00>;
+
+	nvmem-cells = <&macaddr_uboot_1fc00>, <&cal_art_1000>;
+	nvmem-cell-names = "mac-address", "calibration";
 };

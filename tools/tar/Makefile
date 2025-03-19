@@ -8,11 +8,11 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=tar
 PKG_CPE_ID:=cpe:/a:gnu:tar
-PKG_VERSION:=1.31
+PKG_VERSION:=1.35
 
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.xz
+PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=@GNU/tar
-PKG_HASH:=37f3ef1ceebd8b7e1ebf5b8cc6c65bb8ebf002c7d049032bf456860f25ec2dc1
+PKG_HASH:=14d55e32063ea9526e057fbf35fcabd53378e769787eff7919c3755b02d2b57e
 
 HOST_BUILD_PARALLEL:=1
 
@@ -27,5 +27,9 @@ HOST_CONFIGURE_ARGS += \
 	--without-xattrs \
 	--disable-acl \
 	--disable-nls
+
+define Host/Uninstall
+	-$(call Host/Compile/Default,uninstall)
+endef
 
 $(eval $(call HostBuild))

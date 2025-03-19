@@ -13,12 +13,14 @@ platform_do_upgrade() {
 	local board=$(board_name)
 
 	case "$board" in
+	hpe,msm460|\
 	ocedo,panda|\
-	sophos,red-15w-rev1)
-		nand_do_upgrade "$ARGV"
+	sophos,red-15w-rev1|\
+	watchguard,firebox-t10)
+		nand_do_upgrade "$1"
 		;;
 	*)
-		default_do_upgrade "$ARGV"
+		default_do_upgrade "$1"
 		;;
 	esac
 }

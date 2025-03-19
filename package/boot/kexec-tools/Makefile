@@ -8,24 +8,23 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=kexec-tools
-PKG_VERSION:=2.0.16
-PKG_RELEASE:=1
+PKG_VERSION:=2.0.28
+PKG_RELEASE:=2
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.xz
 PKG_SOURCE_URL:=@KERNEL/linux/utils/kernel/kexec
-PKG_HASH:=5b103351ad752c9badd1d65b00eb6de4bce579f944f4df4e3ef3a755ba567010
-
-PKG_FIXUP:=autoreconf
+PKG_HASH:=d2f0ef872f39e2fe4b1b01feb62b0001383207239b9f8041f98a95564161d053
 
 PKG_CONFIG_DEPENDS := CONFIG_KEXEC_ZLIB CONFIG_KEXEC_LZMA
+
+PKG_BUILD_FLAGS:=gc-sections
 
 include $(INCLUDE_DIR)/package.mk
 
 define Package/kexec-tools/Default
   SECTION:=utils
   CATEGORY:=Utilities
-  URL:=http://kernel.org/pub/linux/kernel/people/horms/kexec-tools/
-  MAINTAINER:=Florian Fainelli <florian@openwrt.org>
+  URL:=https://github.com/horms/kexec-tools
 endef
 
 define Package/kexec-tools
@@ -44,7 +43,7 @@ define Package/kexec
   $(call Package/kexec-tools/Default)
   TITLE:=Kernel boots kernel
   DEPENDS:=\
-	@armeb||@arm||@i386||@x86_64||@powerpc64||@mipsel||@mips \
+	@(armeb||arm||i386||x86_64||powerpc64||mipsel||mips) \
 	+KEXEC_ZLIB:zlib +KEXEC_LZMA:liblzma @KERNEL_KEXEC
 endef
 
@@ -55,7 +54,7 @@ endef
 define Package/kdump
   $(call Package/kexec-tools/Default)
   TITLE:=Kernel crash analysis
-  DEPENDS:=+kexec @i386||@x86_64||@arm @KERNEL_CRASH_DUMP
+  DEPENDS:=+kexec @(i386||x86_64||arm) @KERNEL_CRASH_DUMP
 endef
 
 define Package/kdump/description
@@ -85,9 +84,6 @@ CONFIGURE_ARGS = \
 		$(if $(CONFIG_KEXEC_LZMA),--with,--without)-lzma \
 		TARGET_LD="$(TARGET_CROSS)ld"
 
-TARGET_CFLAGS += -ffunction-sections -fdata-sections
-TARGET_LDFLAGS += -Wl,--gc-sections
-
 CONFIGURE_VARS += \
 	BUILD_CC="$(HOSTCC)" \
 	TARGET_CC="$(TARGET_CC)"
@@ -111,7 +107,7 @@ endef
 
 define Package/kdump/install
 	$(INSTALL_DIR) $(1)/usr/sbin $(1)/etc/init.d $(1)/etc/config $(1)/etc/uci-defaults
-	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/sbin/kdump $(PKG_INSTALL_DIR)/usr/sbin/vmcore-dmesg $(1)/usr/sbin
+	$(INSTALL_BIN) $(PKG_INSTALL_DIR)/usr/sbin/vmcore-dmesg $(1)/usr/sbin
 	$(INSTALL_BIN) ./files/kdump.init $(1)/etc/init.d/kdump
 	$(INSTALL_BIN) ./files/kdump.defaults $(1)/etc/uci-defaults/kdump
 	$(INSTALL_CONF) ./files/kdump.config $(1)/etc/config/kdump

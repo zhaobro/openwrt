@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later OR MIT
-/dts-v1/;
+
+#include <dt-bindings/leds/common.h>
 
 #include "ar9344_dlink_dir-8x5.dtsi"
 
@@ -8,40 +9,43 @@
 	compatible = "dlink,dir-835-a1", "qca,ar9344";
 
 	aliases {
-		led-boot = &orange_power;
-		led-failsafe = &orange_power;
-		led-running = &green_power;
-		led-upgrade = &orange_power;
-		serial0 = &uart;
+		led-boot = &led_power_orange;
+		led-failsafe = &led_power_orange;
+		led-running = &led_power_green;
+		led-upgrade = &led_power_orange;
 	};
 
 	leds {
 		compatible = "gpio-leds";
 
-		green_power: green_power {
-			label = "d-link:green:power";
+		led_power_green: power_green {
+			function = LED_FUNCTION_POWER;
+			color = <LED_COLOR_ID_GREEN>;
 			gpios = <&gpio 22 GPIO_ACTIVE_LOW>;
 		};
 
-		green_wan {
-			label = "d-link:green:wan";
+		wan_green {
+			function = LED_FUNCTION_WAN;
+			color = <LED_COLOR_ID_GREEN>;
 			gpios = <&gpio 18 GPIO_ACTIVE_LOW>;
 		};
 
-		green_wps {
-			label = "d-link:green:wps";
+		wps {
+			function = LED_FUNCTION_WPS;
+			color = <LED_COLOR_ID_GREEN>;
 			gpios = <&gpio 15 GPIO_ACTIVE_LOW>;
 		};
 
-		orange_power: orange_power {
-			label = "d-link:orange:power";
+		led_power_orange: power_orange {
+			function = LED_FUNCTION_POWER;
+			color = <LED_COLOR_ID_ORANGE>;
 			gpios = <&gpio 14 GPIO_ACTIVE_LOW>;
 		};
 
-		orange_wan {
-			label = "d-link:orange:wan";
+		wan_orange {
+			function = LED_FUNCTION_WAN;
+			color = <LED_COLOR_ID_ORANGE>;
 			gpios = <&gpio 19 GPIO_ACTIVE_LOW>;
 		};
 	};
 };
-

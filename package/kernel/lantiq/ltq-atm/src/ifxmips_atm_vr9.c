@@ -40,6 +40,8 @@
 #include <linux/proc_fs.h>
 #include <linux/init.h>
 #include <linux/ioctl.h>
+#include <linux/platform_device.h>
+#include <linux/reset.h>
 #include <asm/delay.h>
 
 #include "ifxmips_atm_core.h"
@@ -56,21 +58,37 @@
 #define IFX_PMU_MODULE_AHBS       BIT(13)
 #define IFX_PMU_MODULE_DSL_DFE    BIT(9)
 
-static inline void vr9_reset_ppe(void)
+static inline int vr9_reset_ppe(struct platform_device *pdev)
 {
-/*#ifdef MODULE
-	//  reset PPE
-	ifx_rcu_rst(IFX_RCU_DOMAIN_DSLDFE, IFX_RCU_MODULE_ATM);
+	struct device *dev = &pdev->dev;
+	struct reset_control *dsp;
+	struct reset_control *dfe;
+	struct reset_control *tc;
+
+	dsp = devm_reset_control_get(dev, "dsp");
+	if (IS_ERR(dsp))
+		return dev_err_probe(dev, PTR_ERR(dsp), "Failed to lookup dsp reset");
+
+	dfe = devm_reset_control_get(dev, "dfe");
+	if (IS_ERR(dfe))
+		return dev_err_probe(dev, PTR_ERR(dfe), "Failed to lookup dfe reset");
+
+	tc = devm_reset_control_get(dev, "tc");
+	if (IS_ERR(tc))
+		return dev_err_probe(dev, PTR_ERR(tc), "Failed to lookup tc reset");
+
+	reset_control_assert(dsp);
 	udelay(1000);
-	ifx_rcu_rst(IFX_RCU_DOMAIN_DSLTC, IFX_RCU_MODULE_ATM);
+	reset_control_assert(dfe);
 	udelay(1000);
-	ifx_rcu_rst(IFX_RCU_DOMAIN_PPE, IFX_RCU_MODULE_ATM);
+	reset_control_assert(tc);
 	udelay(1000);
 	*PP32_SRST &= ~0x000303CF;
 	udelay(1000);
 	*PP32_SRST |= 0x000303CF;
 	udelay(1000);
-#endif*/
+
+	return 0;
 }
 
 static inline int vr9_pp32_download_code(int pp32, u32 *code_src, unsigned int code_dword_len, u32 *data_src, unsigned int data_dword_len)
@@ -107,10 +125,11 @@ static void vr9_fw_ver(unsigned int *major, unsigned int *minor)
     *minor = FW_VER_ID->minor;
 }
 
-static void vr9_init(void)
+static int vr9_init(struct platform_device *pdev)
 {
 	volatile u32 *p;
 	unsigned int i;
+	int ret;
 
 	/* setup pmu */
 	ltq_pmu_enable(IFX_PMU_MODULE_PPE_SLL01 |
@@ -120,7 +139,9 @@ static void vr9_init(void)
 		IFX_PMU_MODULE_AHBS |
 		IFX_PMU_MODULE_DSL_DFE);
 
-	vr9_reset_ppe();
+	ret = vr9_reset_ppe(pdev);
+	if (ret)
+		return ret;
 
 	/* pdma init */
 	IFX_REG_W32(0x08,       PDMA_CFG);
@@ -145,6 +166,8 @@ static void vr9_init(void)
 	p = SB_RAM6_ADDR(0);
 	for ( i = 0; i < SB_RAM6_DWLEN; i++ )
 		IFX_REG_W32(0, p++);
+
+	return 0;
 }
 
 static void vr9_shutdown(void)

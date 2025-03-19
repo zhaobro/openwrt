@@ -30,19 +30,13 @@ reload_service() {
 
 	init_switch
 	ubus call network reload || rv=1
-	/sbin/wifi reload_legacy
 	return $rv
 }
 
 stop_service() {
-	/sbin/wifi down
+	[ -x /sbin/wifi ] && /sbin/wifi down
 	ifdown -a
 	sleep 1
-}
-
-service_running() {
-	ubus -t 30 wait_for network.interface
-	/sbin/wifi reload_legacy
 }
 
 validate_atm_bridge_section()
@@ -115,7 +109,9 @@ validate_switch_section()
 		'name:string' \
 		'enable:bool' \
 		'enable_vlan:bool' \
-		'reset:bool'
+		'reset:bool' \
+		'ar8xxx_mib_poll_interval:uinteger' \
+		'ar8xxx_mib_type:range(0,1)'
 }
 
 validate_switch_vlan()

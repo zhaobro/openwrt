@@ -1,21 +1,25 @@
+# SPDX-License-Identifier: GPL-2.0-only
 #
-# Copyright (C) 2006-2011 OpenWrt.org
-#
-# This is free software, licensed under the GNU General Public License v2.
-# See /LICENSE for more information.
-#
+# Copyright (C) 2006-2023 OpenWrt.org
 
 include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
 PKG_NAME:=apex
-PKG_VERSION:=1.6.9
+# This version was created from the stalled and unreleased v1.6.10
+# with some patches on top.
+PKG_VERSION:=1.6.10-openwrt
 PKG_RELEASE:=1
 
-PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
-PKG_SOURCE_URL:=https://downloads.openwrt.org/sources/
-PKG_HASH:=1d2bc04c2c6bb3d2d6c1916b6dc559cda2b1ecb045d7801fd49af6af4234abeb
+PKG_SOURCE_PROTO:=git
+PKG_SOURCE_URL:=https://github.com/linusw/apex.git
+PKG_SOURCE_VERSION:=483e18aa133d5e25866570c29b124530b2d1e0d3
+PKG_MIRROR_HASH:=75e0be55e779a6c1f582bf12f5f98ac175404be9172750c1c1015ad78aa8aa3d
+
 PKG_TARGETS:=bin
+PKG_FLAGS:=nonshared
+PKG_LICENSE:=GPL-2.0
+PKG_LICENSE_FILES:=COPYING
 
 include $(INCLUDE_DIR)/package.mk
 
@@ -24,7 +28,7 @@ export GCC_HONOUR_COPTS=s
 define Package/apex
   SECTION:=boot
   CATEGORY:=Boot Loaders
-  DEPENDS:=@TARGET_ixp4xx
+  DEPENDS:=@TARGET_ixp4xx @!IN_SDK
   DEFAULT:=y
   TITLE:=Boot loader for NSLU2, FSG3, NAS100D and others
 endef
@@ -43,20 +47,15 @@ endef
 
 define Build/Compile
 	$(INSTALL_DIR) $(PKG_BUILD_DIR)/out
-	$(call build_apex,slugos-nslu2-armeb,nslu2-armeb)
-	$(call build_apex,slugos-nslu2-16mb-armeb,nslu2-16mb-armeb)
-	$(call build_apex,slugos-fsg3-armeb,fsg3-armeb)
-	$(call build_apex,slugos-nas100d-armeb,nas100d-armeb)
-endef
-
-define Package/apex/install
-	$(INSTALL_DIR) $(STAGING_DIR)/apex
-	$(CP) $(PKG_BUILD_DIR)/out/*.bin $(1)/
+	$(call build_apex,openwrt-nslu2-armeb,nslu2-armeb)
+	$(call build_apex,openwrt-nslu2-16mb-armeb,nslu2-16mb-armeb)
+	$(call build_apex,openwrt-fsg3-armeb,fsg3-armeb)
+	$(call build_apex,openwrt-nas100d-armeb,nas100d-armeb)
 endef
 
 define Build/InstallDev
-	$(INSTALL_DIR) $(STAGING_DIR_IMAGE)
-	$(CP) $(PKG_BUILD_DIR)/out/*.bin $(STAGING_DIR_IMAGE)/
+	$(INSTALL_DIR) $(STAGING_DIR_IMAGE)/apex
+	$(CP) $(PKG_BUILD_DIR)/out/*.bin $(STAGING_DIR_IMAGE)/apex
 endef
 
 $(eval $(call BuildPackage,apex))

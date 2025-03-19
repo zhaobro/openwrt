@@ -1,6 +1,6 @@
 --- a/configure
 +++ b/configure
-@@ -254,7 +254,7 @@ check_selinux()
+@@ -368,7 +368,7 @@ check_tirpc()
  
  check_mnl()
  {

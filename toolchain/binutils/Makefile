@@ -12,28 +12,20 @@ BIN_VERSION:=$(PKG_VERSION)
 
 PKG_SOURCE_URL:=@GNU/binutils/
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.xz
+PKG_CPE_ID:=cpe:/a:gnu:binutils
 
 TAR_OPTIONS += --exclude='*.rej'
 
-ifeq ($(PKG_VERSION),2.29.1)
-  PKG_HASH:=e7010a46969f9d3e53b650a518663f98a5dde3c3ae21b7d71e5e6803bc36b577
+ifeq ($(PKG_VERSION),2.40)
+  PKG_HASH:=0f8a4c272d7f17f369ded10a4aca28b8e304828e95526da482b0ccc4dfc9d8e1
 endif
 
-ifeq ($(PKG_VERSION),2.30)
-  PKG_HASH:=6e46b8aeae2f727a36f0bd9505e405768a72218f1796f0d09757d45209871ae6
+ifeq ($(PKG_VERSION),2.42)
+  PKG_HASH:=f6e4d41fd5fc778b06b7891457b3620da5ecea1006c6a4a41ae998109f85a800
 endif
 
-ifeq ($(PKG_VERSION),2.31.1)
-  PKG_HASH:=5d20086ecf5752cc7d9134246e9588fa201740d540f7eb84d795b1f7a93bca86
-endif
-
-ifneq ($(CONFIG_BINUTILS_VERSION_2_29_ARC),)
-  PKG_REV:=arc-2017.09-release
-  PKG_SOURCE_URL:=https://github.com/foss-for-synopsys-dwc-arc-processors/binutils-gdb/archive/$(PKG_REV)/
-  PKG_SOURCE:=$(PKG_NAME)-$(PKG_REV).tar.gz
-  PKG_HASH:=2ea086fd5521e942926dd6ff6922ce31c29ee7ffc754fca3d06385e0f27600f8
-  BINUTILS_DIR:=$(PKG_NAME)-gdb-$(PKG_REV)
-  HOST_BUILD_DIR:=$(BUILD_DIR_TOOLCHAIN)/$(BINUTILS_DIR)
+ifeq ($(PKG_VERSION),2.43.1)
+  PKG_HASH:=13f74202a3c4c51118b797a39ea4200d3f6cfbe224da6d1d95bb938480132dfd
 endif
 
 HOST_BUILD_PARALLEL:=1
@@ -42,48 +34,53 @@ PATCH_DIR:=./patches/$(PKG_VERSION)
 
 include $(INCLUDE_DIR)/toolchain-build.mk
 
-BINUTILS_CONFIGURE:= \
-	./configure \
-		--prefix=$(TOOLCHAIN_DIR) \
-		--build=$(GNU_HOST_NAME) \
-		--host=$(GNU_HOST_NAME) \
-		--target=$(REAL_GNU_TARGET_NAME) \
-		--with-sysroot=$(TOOLCHAIN_DIR) \
-		--enable-deterministic-archives \
-		--enable-plugins \
-		--disable-multilib \
-		--disable-werror \
-		--disable-nls \
-		--disable-sim \
-		--disable-gdb \
-		$(GRAPHITE_CONFIGURE) \
-		$(SOFT_FLOAT_CONFIG_OPTION) \
-		$(call qstrip,$(CONFIG_EXTRA_BINUTILS_CONFIG_OPTIONS)) 
+ifdef CONFIG_GCC_USE_GRAPHITE
+  GRAPHITE_CONFIGURE:= --with-isl=$(STAGING_DIR_HOST)
+else
+  GRAPHITE_CONFIGURE:= --without-isl --without-cloog
+endif
+
+HOST_CONFIGURE_ARGS = \
+	--prefix=$(TOOLCHAIN_DIR) \
+	--build=$(GNU_HOST_NAME) \
+	--host=$(GNU_HOST_NAME) \
+	--target=$(REAL_GNU_TARGET_NAME) \
+	--with-sysroot=$(TOOLCHAIN_DIR) \
+	--with-system-zlib \
+	--with-zstd \
+	--enable-deterministic-archives \
+	--enable-plugins \
+	--enable-lto \
+	--disable-gprofng \
+	--disable-multilib \
+	--disable-werror \
+	--disable-nls \
+	--disable-sim \
+	--disable-gdb \
+	$(GRAPHITE_CONFIGURE) \
+	$(SOFT_FLOAT_CONFIG_OPTION) \
+	$(call qstrip,$(CONFIG_EXTRA_BINUTILS_CONFIG_OPTIONS))
 
 ifneq ($(CONFIG_SSP_SUPPORT),)
-  BINUTILS_CONFIGURE+= \
+  HOST_CONFIGURE_ARGS+= \
 		--enable-libssp
 else
-  BINUTILS_CONFIGURE+= \
+  HOST_CONFIGURE_ARGS+= \
 		--disable-libssp
 endif
 
 ifneq ($(CONFIG_EXTRA_TARGET_ARCH),)
-  BINUTILS_CONFIGURE+= \
+  HOST_CONFIGURE_ARGS+= \
 		--enable-targets=$(call qstrip,$(CONFIG_EXTRA_TARGET_ARCH_NAME))-linux-$(TARGET_SUFFIX)
 endif
+
+HOST_CONFIGURE_VARS += \
+	acx_cv_cc_gcc_supports_ada=false
 
 define Host/Prepare
 	$(call Host/Prepare/Default)
 	ln -snf $(notdir $(HOST_BUILD_DIR)) $(BUILD_DIR_TOOLCHAIN)/$(PKG_NAME)
 	$(CP) $(SCRIPT_DIR)/config.{guess,sub} $(HOST_BUILD_DIR)/
-	$(SED) 's, " Linaro.*,,' $(HOST_BUILD_DIR)/bfd/version.h
-endef
-
-define Host/Configure
-	(cd $(HOST_BUILD_DIR); \
-		$(BINUTILS_CONFIGURE) \
-	);
 endef
 
 define Host/Compile
@@ -91,22 +88,10 @@ define Host/Compile
 endef
 
 define Host/Install
-	mkdir -p $(TOOLCHAIN_DIR)/initial
 	$(MAKE) -C $(HOST_BUILD_DIR) \
-		prefix=$(TOOLCHAIN_DIR)/initial \
 		install
-	$(MAKE) -C $(HOST_BUILD_DIR) \
-		prefix=$(TOOLCHAIN_DIR) \
-		install
-	$(call FixupLibdir,$(TOOLCHAIN_DIR)/initial)
-	$(RM) $(TOOLCHAIN_DIR)/initial/lib/libiberty.a
+	$(call FixupLibdir,$(TOOLCHAIN_DIR))
 	$(CP) $(TOOLCHAIN_DIR)/bin/$(REAL_GNU_TARGET_NAME)-readelf $(HOST_BUILD_PREFIX)/bin/readelf
-	# ARC gcc requires extlib.
-	# If extlib is not available in "initial" folder
-	# initial gcc will fail to build libc.
-	if [ -d $(TOOLCHAIN_DIR)/extlib ]; then \
-		$(CP) -r $(TOOLCHAIN_DIR)/extlib $(TOOLCHAIN_DIR)/initial/; \
-	fi
 endef
 
 define Host/Clean
