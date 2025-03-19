@@ -19,10 +19,6 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: 使用仓库中的 .config
-        run: |
-          cp ../.config .config
-
       - name: 最后一步编译
         run: |
           make V=s
