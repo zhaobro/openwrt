@@ -1,7 +1,7 @@
 name: Build OpenWrt for Orange Pi R1
 on:
-  push:
-    branches: [ patched ]
+  workflow_dispatch:
+ 
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -19,11 +19,18 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: 使用仓库中的 .config
-        run: |
-          cp ../.config .config
-
       - name: 最后一步编译
         run: |
           make V=s
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: bin/targets/sunxi/cortexa7/
+
+      - name: final check (rm-able)
+        run: |
+          ls bin/targets/sunxi/cortexa7
+          ip -s link
 
