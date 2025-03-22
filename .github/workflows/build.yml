@@ -21,7 +21,7 @@ jobs:
 
       - name: 最后一步编译
         run: |
-          FORCE=1 make 
+          make 
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
