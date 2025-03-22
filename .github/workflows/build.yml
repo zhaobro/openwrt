@@ -9,11 +9,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential libncurses5-dev zlib1g-dev gawk gcc g++ git
-
       - name: 更新feeds并安装
         run: |
           ./scripts/feeds update -a
