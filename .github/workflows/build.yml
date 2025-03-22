@@ -9,6 +9,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncurses5-dev zlib1g-dev gawk gcc g++ git
+
       - name: 更新feeds并安装
         run: |
           ./scripts/feeds update -a
@@ -16,7 +21,7 @@ jobs:
 
       - name: 最后一步编译
         run: |
-          make 
+          FORCE=1 make 
 
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
